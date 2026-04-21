@@ -1,0 +1,25 @@
+name: Détection leads — prises de poste
+
+on:
+  schedule:
+    - cron: '0 5 * * 1-5'  # Lundi au vendredi à 6h00 heure Paris (UTC+1/+2)
+  workflow_dispatch:         # Permet aussi de lancer manuellement depuis GitHub
+
+jobs:
+  run-routine:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installer les dépendances
+        run: pip install requests google-auth google-auth-httplib2 google-api-python-client
+
+      - name: Lancer la routine
+        run: python main.py
