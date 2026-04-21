@@ -1,19 +1,23 @@
 import requests
 import json
-import os
 import re
 from datetime import datetime, timedelta, date
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# --- Variables d'environnement ---
-PHANTOM_API_KEY  = os.environ["PHANTOM_API_KEY"]
-PHANTOM_AGENT_ID = os.environ["PHANTOM_AGENT_ID"]
-APOLLO_API_KEY   = os.environ["APOLLO_API_KEY"]
-GOOGLE_SHEET_ID  = os.environ["GOOGLE_SHEET_ID"]
-SHEET_TAB        = os.environ.get("SHEET_TAB_NAME", "Leads Pipeline")
-RECENCY_DAYS     = int(os.environ.get("RECENCY_DAYS", "90"))
-CREDS_JSON       = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+# --- Configuration — À REMPLIR ---
+PHANTOM_API_KEY  = "CzgVVniHqEDP8ySqKUMw5OeJlcnqu1n9XLDm5QyHHTdQ"
+PHANTOM_AGENT_ID = "11635677230220160"           # ex: 1635677230220160
+APOLLO_API_KEY   = "l3mu8rYeTAAgnsQcsSHcKg"
+GOOGLE_SHEET_ID  = "115Hsnwk-Vy5_jr4WEZVSpUGZNOscvYZucMOTROVDz2s"           # entre /d/ et /edit dans l'URL
+SHEET_TAB        = "Leads Pipeline"                 # nom exact de l'onglet
+RECENCY_DAYS     = 90
+
+CREDS_JSON = {
+    # COLLER ICI LE CONTENU COMPLET DU FICHIER JSON GOOGLE
+    # Ouvre le fichier JSON avec TextEdit, sélectionne tout, colle ici
+    # Le contenu commence par "type": "service_account", ...
+}
 
 APOLLO_HEADERS = {"X-Api-Key": APOLLO_API_KEY, "Content-Type": "application/json"}
 
