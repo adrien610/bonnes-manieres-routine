@@ -14,10 +14,19 @@ SHEET_TAB        = "Leads Pipeline"                 # nom exact de l'onglet
 RECENCY_DAYS     = 90
 
 CREDS_JSON = {
-    # COLLER ICI LE CONTENU COMPLET DU FICHIER JSON GOOGLE
-    # Ouvre le fichier JSON avec TextEdit, sélectionne tout, colle ici
-    # Le contenu commence par "type": "service_account", ...
+  "type": "service_account",
+  "project_id": "bonnes-manieres-routine-mkg",
+  "private_key_id": "33a07c76ac5d4d89c3c0dccaeaca8703352fb380",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDMalmLObWGIh0p\nwbzPqZfQ5gAbDib+OIs1in0Vix/GC+zQf3xDXLmi9sF0VsUJl35RyyAgami/lkD6\nVoua7xI6HMcUh2lc7eLjSRynQ8lEWP8rTaKbcYNUawSxutCYrGGYTWqupm3RErg8\nTPtPv+9RCrHcOK51bo3klFwjk3dTM9Nm/95420UGrp8ZJaxOysOiClbTYF2EikhJ\nBPKQWqZGVE3es5BLjR0Ep8g5sBZIYCML/LXyqLBgKfIdvW8DU5XiLU9XCnYMYciC\nB7ZB3fuKUdCjafiZ9983O0YvDftmGZc8aN66txUtHy/kRGnJZ6hBySEZqHJ51iL6\nMGQ6Sd11AgMBAAECggEAC2RV5INtJrIvVoy8fVo3OBDJVWNUMFDDDqh5e2zgcsS8\nCDaX8e0bT1tZwVELSWiO7/dWWALLdE88WcyJmoh+Rzd5Wh8zHlcHkPZvHrHmvToJ\n0Rungerb5dAnrSalygxj9/1AgnE1/N6CiUxvqQHKUDA8ufLSuNVWGl9bmdlLChuS\nEdwI1ugpevQJVYKz/TK3MONhmThb62Mm7O5GixES64ROmp5eL3bHP1qaRX+p/QnJ\n/y/hIAgfwF+9HmKshHF8LWgrISWcXrNR6frZr4EqY4GNImEfb+SHi5P85Qo7QU28\nXEVFL3ZG3siBKDTO5IVdRO8JnrBPfJ4KwuOvAFlZlQKBgQD0A+ULhpcDO1/GCj1l\n1Z1NlfVyroFK5Zc0CZc2jjUkoioaDZClGJrMUgEJaSoXL1Uimm1mQGbXWzggek1V\nmqJ35+tZea2cCPKCrs1DUE6kPxK1AcWXERtuygnrZvOPWf4oNBQ9DFDbuQBa+gJy\n59tvwMFxcoKvCPb/FH5XB9DVGwKBgQDWdIzoj+1cv4sDeO5Ko5qjMOL5jNIweX3u\n4gFKvSHuwbpTqtg80kq+u7oj81Eo2M6yVtcKW6cNe8NiIu0+dMVahXuzvuQL66v5\n6umh/071Bju41GTp6NfORb2BfnNrHzg36pE6thO527a5w0/t3OFZxuPyclOFdgt1\na1SCb4uQrwKBgEjzdSGJ/lHICW0CmLJ+N4X/hB7iDuNeWmMDTwLPZxHprV6WmZzS\nC010Yrz2hM/jpbcvpe9A574QlmoXRlGGZnYkjtb0KrQQdLgfHFy4gJpYBPa6beEp\nCyOHIYoQAFbmF7bbQwWxTecymumX/u1tZcw2O174VhuQOY+vB8prGsLrAoGAYec9\neOJUC3aKYSBxMPP1obCsvh5yypx8SHU2/8bOWfBpPs8M/t9GLkMHnGf1Uj+ARVxt\nuZXT8szgisnFIzEt88Bik9F+zI5fqa170W/7vNKGqz+TflHFS67878QprurGwIg+\nmt4KrVvH1JB8yet/mXu6DrHwvUoBuy4vm4iO35MCgYEA3Z1vH97dacfv5daaz9xZ\nMLzov5/VONrfS26KdFzcTqlgCqFDEREci3kQZiOkgk/6hWjr73L52Wen/lwC3olu\nAa5vBWcfsGXwUH5rlL2a5ZLr/NJvAOLfQK0aot1ttf6o3QBSATCyReSzuCnTdC75\nY3CMrIne8rEGwFOsCag6GBo=\n-----END PRIVATE KEY-----\n",
+  "client_email": "routine-leads@bonnes-manieres-routine-mkg.iam.gserviceaccount.com",
+  "client_id": "114749496852971951914",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/routine-leads%40bonnes-manieres-routine-mkg.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
 }
+
 
 APOLLO_HEADERS = {"X-Api-Key": APOLLO_API_KEY, "Content-Type": "application/json"}
 
