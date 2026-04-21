@@ -314,10 +314,6 @@ def score_lead(lead):
 # ÉTAPE 6 — Google Sheets
 # ============================================================
 def push_to_sheets(qualified):
-    if not qualified:
-        print("ℹ️ Aucun lead qualifié — Google Sheets non contacté.")
-        return
-
     creds = service_account.Credentials.from_service_account_info(
         CREDS_JSON, scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
@@ -382,11 +378,13 @@ if __name__ == "__main__":
 
     print(f"\nLeads qualifiés (score ≥ 5) : {len(qualified)}")
 
-    if qualified:
+    if len(qualified) > 0:
         print("\nTOP 3 LEADS DU JOUR :")
         for i, l in enumerate(sorted(qualified, key=lambda x: x["score"], reverse=True)[:3], 1):
             print(f"{i}. {l.get('first_name')} {l.get('last_name')} — {l.get('title')} chez {l.get('company_name')} | Score: {l.get('score')}/10 | {l.get('priority')}")
             print(f"   → {l.get('score_detail')}")
+        push_to_sheets(qualified)
+    else:
+        print("ℹ️ Aucun lead qualifié aujourd'hui — fin de routine.")
 
-    push_to_sheets(qualified)
     print("\n=== FIN DE ROUTINE ===")
