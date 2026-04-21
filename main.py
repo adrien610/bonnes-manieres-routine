@@ -5,12 +5,12 @@ from datetime import datetime, timedelta, date
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# --- Configuration — À REMPLIR ---
+# --- Configuration ---
 PHANTOM_API_KEY  = "CzgVVniHqEDP8ySqKUMw5OeJlcnqu1n9XLDm5QyHHTdQ"
-PHANTOM_AGENT_ID = "11635677230220160"           # ex: 1635677230220160
+PHANTOM_AGENT_ID = "1635677230220160"
 APOLLO_API_KEY   = "l3mu8rYeTAAgnsQcsSHcKg"
-GOOGLE_SHEET_ID  = "115Hsnwk-Vy5_jr4WEZVSpUGZNOscvYZucMOTROVDz2s"           # entre /d/ et /edit dans l'URL
-SHEET_TAB        = "Leads Pipeline"                 # nom exact de l'onglet
+GOOGLE_SHEET_ID  = "115Hsnwk-Vy5_jr4WEZVSpUGZNOscvYZucMOTROVDz2s"
+SHEET_TAB        = "Leads Pipeline"
 RECENCY_DAYS     = 90
 
 CREDS_JSON = {
@@ -26,7 +26,6 @@ CREDS_JSON = {
   "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/routine-leads%40bonnes-manieres-routine-mkg.iam.gserviceaccount.com",
   "universe_domain": "googleapis.com"
 }
-
 
 APOLLO_HEADERS = {"X-Api-Key": APOLLO_API_KEY, "Content-Type": "application/json"}
 
@@ -327,6 +326,10 @@ def score_lead(lead):
 # ÉTAPE 6 — Google Sheets
 # ============================================================
 def push_to_sheets(qualified):
+    if not qualified:
+        print("ℹ️ Aucun lead qualifié — Google Sheets non contacté.")
+        return
+
     creds = service_account.Credentials.from_service_account_info(
         CREDS_JSON, scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
@@ -367,16 +370,13 @@ def push_to_sheets(qualified):
             l.get("source", ""),
         ])
 
-    if rows:
-        service.spreadsheets().values().append(
-            spreadsheetId=GOOGLE_SHEET_ID,
-            range=f"{SHEET_TAB}!A:P",
-            valueInputOption="USER_ENTERED",
-            body={"values": rows}
-        ).execute()
-        print(f"✅ {len(rows)} leads ajoutés au Google Sheet.")
-    else:
-        print("ℹ️ Aucun lead qualifié aujourd'hui.")
+    service.spreadsheets().values().append(
+        spreadsheetId=GOOGLE_SHEET_ID,
+        range=f"{SHEET_TAB}!A:P",
+        valueInputOption="USER_ENTERED",
+        body={"values": rows}
+    ).execute()
+    print(f"✅ {len(rows)} leads ajoutés au Google Sheet.")
 
 
 # ============================================================
