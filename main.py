@@ -11,7 +11,11 @@ PHANTOM_API_KEY  = os.environ["PHANTOM_API_KEY"]
 PHANTOM_AGENT_ID = os.environ["PHANTOM_AGENT_ID"]
 APOLLO_API_KEY   = os.environ["APOLLO_API_KEY"]
 GOOGLE_SHEET_ID  = os.environ["GOOGLE_SHEET_ID"]
-CREDS_JSON       = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+_raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+print(f"[DEBUG] JSON longueur : {len(_raw)} caractères")
+print(f"[DEBUG] Début : {_raw[:50]}")
+print(f"[DEBUG] Fin : {_raw[-50:]}")
+CREDS_JSON = json.loads(_raw)
 SHEET_TAB        = "Leads Pipeline"
 RECENCY_DAYS     = 90
  
