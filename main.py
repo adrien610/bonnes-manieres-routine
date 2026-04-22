@@ -5,22 +5,18 @@ import re
 from datetime import datetime, timedelta, date
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
- 
+
 # --- Configuration via GitHub Secrets ---
 PHANTOM_API_KEY  = os.environ["PHANTOM_API_KEY"]
 PHANTOM_AGENT_ID = os.environ["PHANTOM_AGENT_ID"]
 APOLLO_API_KEY   = os.environ["APOLLO_API_KEY"]
 GOOGLE_SHEET_ID  = os.environ["GOOGLE_SHEET_ID"]
-_raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-print(f"[DEBUG] JSON longueur : {len(_raw)} caractères")
-print(f"[DEBUG] Début : {_raw[:50]}")
-print(f"[DEBUG] Fin : {_raw[-50:]}")
-CREDS_JSON = json.loads(_raw)
+CREDS_JSON       = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
 SHEET_TAB        = "Leads Pipeline"
 RECENCY_DAYS     = 90
- 
+
 APOLLO_HEADERS = {"X-Api-Key": APOLLO_API_KEY, "Content-Type": "application/json"}
- 
+
 # --- ICP Bonnes Manières ---
 ICP_TITLES = [
     "directeur commercial", "directrice commerciale",
@@ -30,7 +26,7 @@ ICP_TITLES = [
     "sales director", "director of sales",
     "vp sales", "vp commercial", "vice president sales",
 ]
- 
+
 ICP_INDUSTRIES_INCLUDE = [
     "web design", "digital marketing", "seo", "search engine optimization",
     "online media", "internet", "marketing and advertising",
@@ -39,7 +35,7 @@ ICP_INDUSTRIES_INCLUDE = [
     "public relations", "media relations", "communications", "pr agency",
     "software", "computer software", "saas", "enterprise software", "application software",
 ]
- 
+
 ICP_INDUSTRIES_EXCLUDE = [
     "staffing and recruiting", "outsourcing/offshoring",
     "managed services", "it services",
@@ -47,17 +43,17 @@ ICP_INDUSTRIES_EXCLUDE = [
     "professional training & coaching", "e-learning", "training",
     "human resources", "hr", "coaching",
 ]
- 
+
 MARKETING_TITLES_NEGATIVE = [
     "chief marketing", "cmo", "vp marketing", "head of marketing",
     "directeur marketing", "directrice marketing", "marketing director",
     "marketing manager", "responsable marketing",
 ]
- 
+
 ICP_SIZE_MIN = 10
 ICP_SIZE_MAX = 50
- 
- 
+
+
 # ============================================================
 # ÉTAPE 1 — Source A : Phantombuster
 # ============================================================
@@ -77,8 +73,8 @@ def parse_duration_in_role(duration_str):
         return None, ""
     estimated_date = (datetime.now() - timedelta(days=total_days)).date()
     return total_days, estimated_date.isoformat()
- 
- 
+
+
 def fetch_phantombuster():
     r = requests.get(
         "https://api.phantombuster.com/api/v2/agents/fetch-output",
@@ -87,7 +83,7 @@ def fetch_phantombuster():
     )
     data = r.json()
     raw = json.loads(data.get("output", "[]"))
- 
+
     profiles = []
     skipped = 0
     for p in raw:
@@ -109,13 +105,13 @@ def fetch_phantombuster():
             })
         else:
             skipped += 1
- 
+
     print(f"[Source A] Phantombuster : {len(raw)} bruts | {len(profiles)} dans la fenêtre {RECENCY_DAYS}j | {skipped} ignorés")
     return profiles
- 
- 
+
+
 # ============================================================
-# ÉTAPE 2 — Source B : Apollo Search
+# ÉTAPE 2 — Source B : Apollo Search (sans filtre secteur)
 # ============================================================
 def fetch_apollo_search():
     payload = {
@@ -124,11 +120,6 @@ def fetch_apollo_search():
             "chief commercial officer", "head of sales",
             "sales director", "director of sales",
             "vp sales", "directeur du développement commercial"
-        ],
-        "organization_industry_tag_ids": [
-            "computer software", "internet", "online media",
-            "marketing and advertising", "computer & network security",
-            "public relations and communications", "web design"
         ],
         "organization_num_employees_ranges": ["10,50"],
         "person_locations": ["France", "Belgium", "Switzerland"],
@@ -142,7 +133,7 @@ def fetch_apollo_search():
         json=payload
     )
     raw = r.json().get("people", [])
- 
+
     profiles = []
     for p in raw:
         org = p.get("organization") or {}
@@ -159,21 +150,21 @@ def fetch_apollo_search():
             "location":        (p.get("city") or "") + ", " + (p.get("country") or ""),
             "source":          "apollo_search",
         })
- 
+
     print(f"[Source B] Apollo Search : {len(profiles)} profils")
     return profiles
- 
- 
+
+
 # ============================================================
 # ÉTAPE 3 — Fusion & déduplication
 # ============================================================
 def merge_profiles(phantom_profiles, apollo_profiles):
     merged = {}
- 
+
     for p in phantom_profiles:
         key = p["linkedin_url"] or f"{p['first_name'].lower()}_{p['last_name'].lower()}_{p['company_name'].lower()}"
         merged[key] = p
- 
+
     apollo_only = 0
     duplicates = 0
     for p in apollo_profiles:
@@ -187,12 +178,12 @@ def merge_profiles(phantom_profiles, apollo_profiles):
         else:
             merged[key] = p
             apollo_only += 1
- 
+
     all_profiles = list(merged.values())
     print(f"[Fusion] {len(all_profiles)} uniques | {len(phantom_profiles)} PB | {apollo_only} Apollo seul | {duplicates} doublons fusionnés")
     return all_profiles
- 
- 
+
+
 # ============================================================
 # ÉTAPE 4 — Enrichissement Apollo (si données manquantes)
 # ============================================================
@@ -230,11 +221,11 @@ def enrich_profiles(profiles):
             credits += 1
         except Exception as e:
             print(f"Enrichissement échoué pour {p.get('first_name')} {p.get('last_name')} : {e}")
- 
+
     print(f"[Enrichissement] Crédits Apollo utilisés : ~{credits} / 2500 mensuels")
     return profiles
- 
- 
+
+
 # ============================================================
 # ÉTAPE 5 — Scoring ICP
 # ============================================================
@@ -244,28 +235,28 @@ def score_lead(lead):
     title_lower = (lead.get("title") or "").lower()
     industry_lower = (lead.get("industry") or "").lower()
     team_titles = [t.lower() for t in lead.get("team_titles", [])]
- 
+
     if not any(t in title_lower for t in ICP_TITLES):
         lead["score"] = 0
         lead["priority"] = "Hors cible — mauvaise fonction"
         lead["score_detail"] = "Fonction non cible, lead écarté"
         return lead
- 
+
     score += 3
     reasons.append("Fonction cible +3")
- 
+
     if any(i in industry_lower for i in ICP_INDUSTRIES_EXCLUDE):
         lead["score"] = 0
         lead["priority"] = "Hors cible — secteur exclu"
         lead["score_detail"] = f"Secteur exclu : {lead.get('industry', '')}"
         return lead
- 
+
     if any(i in industry_lower for i in ICP_INDUSTRIES_INCLUDE):
         score += 2
         reasons.append("Secteur cible +2")
     else:
         reasons.append("Secteur non identifié +0")
- 
+
     size = lead.get("company_size")
     if size:
         try:
@@ -277,7 +268,7 @@ def score_lead(lead):
                 reasons.append(f"Taille hors cible ({s} empl.) +0")
         except:
             pass
- 
+
     has_marketing = any(m in t for m in MARKETING_TITLES_NEGATIVE for t in team_titles)
     if not has_marketing:
         score += 2
@@ -285,7 +276,7 @@ def score_lead(lead):
     else:
         score -= 1
         reasons.append("Marketing dans l'équipe -1")
- 
+
     jcd = lead.get("job_change_date", "")
     if jcd:
         try:
@@ -297,7 +288,7 @@ def score_lead(lead):
                 reasons.append(f"Signal frais ({days_ago}j) +0")
         except:
             pass
- 
+
     score = max(0, score)
     if score >= 7:
         priority = "P1 — À contacter cette semaine"
@@ -307,13 +298,13 @@ def score_lead(lead):
         priority = "P3 — À surveiller"
     else:
         priority = "Hors cible"
- 
+
     lead["score"] = score
     lead["priority"] = priority
     lead["score_detail"] = " | ".join(reasons)
     return lead
- 
- 
+
+
 # ============================================================
 # ÉTAPE 6 — Google Sheets
 # ============================================================
@@ -323,7 +314,7 @@ def push_to_sheets(qualified):
     )
     service = build("sheets", "v4", credentials=creds)
     today = date.today().isoformat()
- 
+
     rows = []
     for l in qualified:
         days_in_role = ""
@@ -333,12 +324,12 @@ def push_to_sheets(qualified):
                 days_in_role = f"{d}j dans le poste"
             except:
                 pass
- 
+
         angle = (
             f"Nouveau {l.get('title', '')} chez {l.get('company_name', '')} ({days_in_role}) — "
             f"structure commerciale en construction, moment idéal pour poser les bases avec Bonnes Manières."
         )
- 
+
         rows.append([
             today,
             l.get("first_name", ""),
@@ -357,7 +348,7 @@ def push_to_sheets(qualified):
             l.get("score_detail", ""),
             l.get("source", ""),
         ])
- 
+
     service.spreadsheets().values().append(
         spreadsheetId=GOOGLE_SHEET_ID,
         range=f"{SHEET_TAB}!A:P",
@@ -365,23 +356,23 @@ def push_to_sheets(qualified):
         body={"values": rows}
     ).execute()
     print(f"✅ {len(rows)} leads ajoutés au Google Sheet.")
- 
- 
+
+
 # ============================================================
 # MAIN
 # ============================================================
 if __name__ == "__main__":
     print(f"\n=== ROUTINE BONNES MANIÈRES — {date.today()} ===\n")
- 
+
     phantom_profiles = fetch_phantombuster()
     apollo_profiles  = fetch_apollo_search()
     all_profiles     = merge_profiles(phantom_profiles, apollo_profiles)
     enriched         = enrich_profiles(all_profiles)
     scored           = [score_lead(l) for l in enriched]
     qualified        = [l for l in scored if l.get("score", 0) >= 5]
- 
+
     print(f"\nLeads qualifiés (score ≥ 5) : {len(qualified)}")
- 
+
     if len(qualified) > 0:
         print("\nTOP 3 LEADS DU JOUR :")
         for i, l in enumerate(sorted(qualified, key=lambda x: x["score"], reverse=True)[:3], 1):
@@ -390,5 +381,5 @@ if __name__ == "__main__":
         push_to_sheets(qualified)
     else:
         print("ℹ️ Aucun lead qualifié aujourd'hui — fin de routine.")
- 
+
     print("\n=== FIN DE ROUTINE ===")
