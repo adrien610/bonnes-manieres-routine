@@ -2,6 +2,8 @@ import requests
 import json
 import os
 import re
+import csv
+import io
 from datetime import datetime, timedelta, date
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -34,6 +36,9 @@ ICP_INDUSTRIES_INCLUDE = [
     "network security", "cyber security",
     "public relations", "media relations", "communications", "pr agency",
     "software", "computer software", "saas", "enterprise software", "application software",
+    "technology", "information technology", "développement de logiciels",
+    "technologie", "services et conseil aux entreprises", "services de publicité",
+    "produits logiciels", "services de données",
 ]
 
 ICP_INDUSTRIES_EXCLUDE = [
@@ -42,6 +47,7 @@ ICP_INDUSTRIES_EXCLUDE = [
     "management consulting", "business consulting", "consulting",
     "professional training & coaching", "e-learning", "training",
     "human resources", "hr", "coaching",
+    "enseignement", "administration", "services législatifs",
 ]
 
 MARKETING_TITLES_NEGATIVE = [
@@ -76,121 +82,114 @@ def parse_duration_in_role(duration_str):
 
 
 def fetch_phantombuster():
+    # Récupérer les infos de l'agent pour trouver l'URL du fichier résultat
     r = requests.get(
-        "https://api.phantombuster.com/api/v2/agents/fetch-output",
+        "https://api.phantombuster.com/api/v2/agents/fetch",
         params={"id": PHANTOM_AGENT_ID},
         headers={"X-Phantombuster-Key": PHANTOM_API_KEY}
     )
-    data = r.json()
-    raw = json.loads(data.get("output", "[]"))
+    agent_info = r.json()
+    print(f"[Debug PB] Agent status: {agent_info.get('agent', {}).get('lastEndMessage', 'N/A')}")
+
+    # Essayer de récupérer le fichier résultat CSV via S3
+    s3_folder = agent_info.get("agent", {}).get("s3Folder", "")
+    org_s3     = agent_info.get("agent", {}).get("orgS3Folder", "")
+    result_url = ""
+
+    if s3_folder:
+        result_url = f"https://phantombuster.s3.amazonaws.com/{s3_folder}/result.csv"
+    elif org_s3:
+        result_url = f"https://phantombuster.s3.amazonaws.com/{org_s3}/result.csv"
+
+    raw_profiles = []
+
+    # Tenter de télécharger le CSV depuis S3
+    if result_url:
+        try:
+            csv_r = requests.get(result_url, timeout=30)
+            if csv_r.status_code == 200:
+                reader = csv.DictReader(io.StringIO(csv_r.text))
+                raw_profiles = list(reader)
+                print(f"[Debug PB] CSV S3 téléchargé : {len(raw_profiles)} lignes")
+        except Exception as e:
+            print(f"[Debug PB] Échec S3 : {e}")
+
+    # Fallback : fetch-output (resultObject ou output)
+    if not raw_profiles:
+        r2 = requests.get(
+            "https://api.phantombuster.com/api/v2/agents/fetch-output",
+            params={"id": PHANTOM_AGENT_ID},
+            headers={"X-Phantombuster-Key": PHANTOM_API_KEY}
+        )
+        data = r2.json()
+        print(f"[Debug PB] fetch-output keys: {list(data.keys())}")
+
+        # Essayer resultObject d'abord
+        result_obj = data.get("resultObject", "")
+        if result_obj:
+            try:
+                raw_profiles = json.loads(result_obj)
+                print(f"[Debug PB] resultObject parsé : {len(raw_profiles)} profils")
+            except:
+                # Peut-être que c'est du CSV dans resultObject
+                try:
+                    reader = csv.DictReader(io.StringIO(result_obj))
+                    raw_profiles = list(reader)
+                    print(f"[Debug PB] resultObject CSV : {len(raw_profiles)} profils")
+                except Exception as e:
+                    print(f"[Debug PB] Échec parsing resultObject : {e}")
+
+        # Fallback sur output
+        if not raw_profiles:
+            output = data.get("output", "[]")
+            try:
+                raw_profiles = json.loads(output)
+                print(f"[Debug PB] output JSON : {len(raw_profiles)} profils")
+            except:
+                print(f"[Debug PB] output non parsable (longueur: {len(output)})")
 
     profiles = []
     skipped = 0
-    for p in raw:
+    for p in raw_profiles:
+        # Gérer les deux formats : JSON (camelCase) et CSV (camelCase aussi)
         duration_str = p.get("durationInRole", "") or p.get("jobChangeDate", "")
         days_ago, estimated_date = parse_duration_in_role(duration_str)
+
+        # LinkedIn URL : préférer linkedInProfileUrl (standard) sur profileUrl (Sales Nav)
+        linkedin_url = (
+            p.get("linkedInProfileUrl") or
+            p.get("defaultProfileUrl") or
+            p.get("linkedinUrl") or ""
+        ).lower().strip("/")
+
         if days_ago is None or days_ago <= RECENCY_DAYS:
             profiles.append({
                 "first_name":      p.get("firstName", ""),
                 "last_name":       p.get("lastName", ""),
-                "title":           p.get("jobTitle", ""),
-                "company_name":    p.get("company", ""),
-                "linkedin_url":    (p.get("linkedinUrl") or "").lower().strip("/"),
+                "title":           p.get("title", "") or p.get("jobTitle", ""),
+                "company_name":    p.get("companyName", "") or p.get("company", ""),
+                "linkedin_url":    linkedin_url,
                 "job_change_date": estimated_date,
                 "email":           "",
                 "company_size":    "",
-                "industry":        "",
-                "location":        "",
+                "industry":        p.get("industry", ""),
+                "location":        p.get("location", ""),
                 "source":          "phantombuster",
             })
         else:
             skipped += 1
 
-    print(f"[Source A] Phantombuster : {len(raw)} bruts | {len(profiles)} dans la fenêtre {RECENCY_DAYS}j | {skipped} ignorés")
+    print(f"[Source A] Phantombuster : {len(raw_profiles)} bruts | {len(profiles)} dans la fenêtre {RECENCY_DAYS}j | {skipped} ignorés")
     return profiles
 
 
 # ============================================================
-# ÉTAPE 2 — Source B : Apollo Search (sans filtre secteur)
-# ============================================================
-def fetch_apollo_search():
-    payload = {
-        "person_titles": [
-            "directeur commercial", "directrice commerciale",
-            "chief commercial officer", "head of sales",
-            "sales director", "director of sales",
-            "vp sales", "directeur du développement commercial"
-        ],
-        "organization_num_employees_ranges": ["10,50"],
-        "person_locations": ["France", "Belgium", "Switzerland"],
-        "changed_jobs_within_days": RECENCY_DAYS,
-        "per_page": 50,
-        "page": 1,
-    }
-    r = requests.post(
-        "https://api.apollo.io/v1/mixed_people/search",
-        headers=APOLLO_HEADERS,
-        json=payload
-    )
-    raw = r.json().get("people", [])
-
-    profiles = []
-    for p in raw:
-        org = p.get("organization") or {}
-        profiles.append({
-            "first_name":      p.get("first_name", ""),
-            "last_name":       p.get("last_name", ""),
-            "title":           p.get("title", ""),
-            "company_name":    org.get("name", ""),
-            "linkedin_url":    (p.get("linkedin_url") or "").lower().strip("/"),
-            "job_change_date": "",
-            "email":           p.get("email", ""),
-            "company_size":    org.get("estimated_num_employees", ""),
-            "industry":        org.get("industry", ""),
-            "location":        (p.get("city") or "") + ", " + (p.get("country") or ""),
-            "source":          "apollo_search",
-        })
-
-    print(f"[Source B] Apollo Search : {len(profiles)} profils")
-    return profiles
-
-
-# ============================================================
-# ÉTAPE 3 — Fusion & déduplication
-# ============================================================
-def merge_profiles(phantom_profiles, apollo_profiles):
-    merged = {}
-
-    for p in phantom_profiles:
-        key = p["linkedin_url"] or f"{p['first_name'].lower()}_{p['last_name'].lower()}_{p['company_name'].lower()}"
-        merged[key] = p
-
-    apollo_only = 0
-    duplicates = 0
-    for p in apollo_profiles:
-        key = p["linkedin_url"] or f"{p['first_name'].lower()}_{p['last_name'].lower()}_{p['company_name'].lower()}"
-        if key in merged:
-            for field in ["email", "company_size", "industry", "location"]:
-                if not merged[key].get(field) and p.get(field):
-                    merged[key][field] = p[field]
-            merged[key]["source"] = "phantombuster + apollo"
-            duplicates += 1
-        else:
-            merged[key] = p
-            apollo_only += 1
-
-    all_profiles = list(merged.values())
-    print(f"[Fusion] {len(all_profiles)} uniques | {len(phantom_profiles)} PB | {apollo_only} Apollo seul | {duplicates} doublons fusionnés")
-    return all_profiles
-
-
-# ============================================================
-# ÉTAPE 4 — Enrichissement Apollo (si données manquantes)
+# ÉTAPE 2 — Enrichissement Apollo (si données manquantes)
 # ============================================================
 def enrich_profiles(profiles):
     credits = 0
     for p in profiles:
-        if p.get("industry") and p.get("company_size") and p.get("email"):
+        if p.get("email") and p.get("company_size"):
             continue
         payload = {
             "first_name":             p.get("first_name", ""),
@@ -210,31 +209,28 @@ def enrich_profiles(profiles):
             org = person.get("organization") or {}
             if not p.get("email"):
                 p["email"] = person.get("email", "")
-            if not p.get("industry"):
-                p["industry"] = org.get("industry", "")
             if not p.get("company_size"):
                 p["company_size"] = org.get("estimated_num_employees", "")
+            if not p.get("industry"):
+                p["industry"] = org.get("industry", "")
             if not p.get("location"):
                 p["location"] = (person.get("city") or "") + ", " + (person.get("country") or "")
-            if not p.get("title"):
-                p["title"] = person.get("title", "")
             credits += 1
         except Exception as e:
             print(f"Enrichissement échoué pour {p.get('first_name')} {p.get('last_name')} : {e}")
 
-    print(f"[Enrichissement] Crédits Apollo utilisés : ~{credits} / 2500 mensuels")
+    print(f"[Enrichissement] Crédits Apollo utilisés : ~{credits} / 5000 mensuels")
     return profiles
 
 
 # ============================================================
-# ÉTAPE 5 — Scoring ICP
+# ÉTAPE 3 — Scoring ICP
 # ============================================================
 def score_lead(lead):
     score = 0
     reasons = []
     title_lower = (lead.get("title") or "").lower()
     industry_lower = (lead.get("industry") or "").lower()
-    team_titles = [t.lower() for t in lead.get("team_titles", [])]
 
     if not any(t in title_lower for t in ICP_TITLES):
         lead["score"] = 0
@@ -255,7 +251,7 @@ def score_lead(lead):
         score += 2
         reasons.append("Secteur cible +2")
     else:
-        reasons.append("Secteur non identifié +0")
+        reasons.append(f"Secteur non identifié ({lead.get('industry', 'vide')}) +0")
 
     size = lead.get("company_size")
     if size:
@@ -268,14 +264,12 @@ def score_lead(lead):
                 reasons.append(f"Taille hors cible ({s} empl.) +0")
         except:
             pass
-
-    has_marketing = any(m in t for m in MARKETING_TITLES_NEGATIVE for t in team_titles)
-    if not has_marketing:
-        score += 2
-        reasons.append("Pas de marketing dédié +2")
     else:
-        score -= 1
-        reasons.append("Marketing dans l'équipe -1")
+        reasons.append("Taille inconnue +0")
+
+    # Pas de marketing dédié détecté → +2 par défaut (on n'a pas les titres d'équipe)
+    score += 2
+    reasons.append("Pas de marketing dédié détecté +2")
 
     jcd = lead.get("job_change_date", "")
     if jcd:
@@ -285,7 +279,7 @@ def score_lead(lead):
                 score += 1
                 reasons.append(f"Signal très frais ({days_ago}j) +1")
             else:
-                reasons.append(f"Signal frais ({days_ago}j) +0")
+                reasons.append(f"Signal ({days_ago}j) +0")
         except:
             pass
 
@@ -306,7 +300,7 @@ def score_lead(lead):
 
 
 # ============================================================
-# ÉTAPE 6 — Google Sheets
+# ÉTAPE 4 — Google Sheets
 # ============================================================
 def push_to_sheets(qualified):
     creds = service_account.Credentials.from_service_account_info(
@@ -326,7 +320,7 @@ def push_to_sheets(qualified):
                 pass
 
         angle = (
-            f"Nouveau {l.get('title', '')} chez {l.get('company_name', '')} ({days_in_role}) — "
+            f"Nouveau·elle {l.get('title', '')} chez {l.get('company_name', '')} ({days_in_role}) — "
             f"structure commerciale en construction, moment idéal pour poser les bases avec Bonnes Manières."
         )
 
@@ -364,12 +358,10 @@ def push_to_sheets(qualified):
 if __name__ == "__main__":
     print(f"\n=== ROUTINE BONNES MANIÈRES — {date.today()} ===\n")
 
-    phantom_profiles = fetch_phantombuster()
-    apollo_profiles  = fetch_apollo_search()
-    all_profiles     = merge_profiles(phantom_profiles, apollo_profiles)
-    enriched         = enrich_profiles(all_profiles)
-    scored           = [score_lead(l) for l in enriched]
-    qualified        = [l for l in scored if l.get("score", 0) >= 5]
+    profiles  = fetch_phantombuster()
+    enriched  = enrich_profiles(profiles)
+    scored    = [score_lead(l) for l in enriched]
+    qualified = [l for l in scored if l.get("score", 0) >= 5]
 
     print(f"\nLeads qualifiés (score ≥ 5) : {len(qualified)}")
 
@@ -381,5 +373,10 @@ if __name__ == "__main__":
         push_to_sheets(qualified)
     else:
         print("ℹ️ Aucun lead qualifié aujourd'hui — fin de routine.")
+        # Afficher les 3 premiers profils scorés pour debug
+        if scored:
+            print("\n[Debug] Aperçu des 3 premiers profils scorés :")
+            for l in scored[:3]:
+                print(f"  - {l.get('first_name')} {l.get('last_name')} | {l.get('title')} | Score: {l.get('score')} | {l.get('score_detail')}")
 
     print("\n=== FIN DE ROUTINE ===")
