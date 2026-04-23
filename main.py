@@ -3,14 +3,11 @@ import json
 import os
 import re
 import csv
-import io
 from datetime import datetime, timedelta, date
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 # --- Configuration via GitHub Secrets ---
-PHANTOM_API_KEY  = os.environ["PHANTOM_API_KEY"]
-PHANTOM_AGENT_ID = os.environ["PHANTOM_AGENT_ID"]
 APOLLO_API_KEY   = os.environ["APOLLO_API_KEY"]
 GOOGLE_SHEET_ID  = os.environ["GOOGLE_SHEET_ID"]
 CREDS_JSON       = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
@@ -38,7 +35,7 @@ ICP_INDUSTRIES_INCLUDE = [
     "software", "computer software", "saas", "enterprise software", "application software",
     "technology", "information technology", "développement de logiciels",
     "technologie", "services et conseil aux entreprises", "services de publicité",
-    "produits logiciels", "services de données",
+    "produits logiciels", "services de données", "services informatiques",
 ]
 
 ICP_INDUSTRIES_EXCLUDE = [
@@ -50,18 +47,12 @@ ICP_INDUSTRIES_EXCLUDE = [
     "enseignement", "administration", "services législatifs",
 ]
 
-MARKETING_TITLES_NEGATIVE = [
-    "chief marketing", "cmo", "vp marketing", "head of marketing",
-    "directeur marketing", "directrice marketing", "marketing director",
-    "marketing manager", "responsable marketing",
-]
-
 ICP_SIZE_MIN = 10
 ICP_SIZE_MAX = 50
 
 
 # ============================================================
-# ÉTAPE 1 — Source A : Phantombuster
+# ÉTAPE 1 — Lire le CSV Phantombuster depuis le repo
 # ============================================================
 def parse_duration_in_role(duration_str):
     if not duration_str:
@@ -81,81 +72,25 @@ def parse_duration_in_role(duration_str):
     return total_days, estimated_date.isoformat()
 
 
-def fetch_phantombuster():
-    # Récupérer les infos de l'agent pour trouver l'URL du fichier résultat
-    r = requests.get(
-        "https://api.phantombuster.com/api/v2/agents/fetch",
-        params={"id": PHANTOM_AGENT_ID},
-        headers={"X-Phantombuster-Key": PHANTOM_API_KEY}
-    )
-    agent_info = r.json()
-    print(f"[Debug PB] Agent status: {agent_info.get('agent', {}).get('lastEndMessage', 'N/A')}")
-
-    # Essayer de récupérer le fichier résultat CSV via S3
-    s3_folder = agent_info.get("agent", {}).get("s3Folder", "")
-    org_s3     = agent_info.get("agent", {}).get("orgS3Folder", "")
-    result_url = ""
-
-    if s3_folder:
-        result_url = f"https://phantombuster.s3.amazonaws.com/{s3_folder}/result.csv"
-    elif org_s3:
-        result_url = f"https://phantombuster.s3.amazonaws.com/{org_s3}/result.csv"
-
-    raw_profiles = []
-
-    # Tenter de télécharger le CSV depuis S3
-    if result_url:
-        try:
-            csv_r = requests.get(result_url, timeout=30)
-            if csv_r.status_code == 200:
-                reader = csv.DictReader(io.StringIO(csv_r.text))
-                raw_profiles = list(reader)
-                print(f"[Debug PB] CSV S3 téléchargé : {len(raw_profiles)} lignes")
-        except Exception as e:
-            print(f"[Debug PB] Échec S3 : {e}")
-
-    # Fallback : fetch-output (resultObject ou output)
-    if not raw_profiles:
-        r2 = requests.get(
-            "https://api.phantombuster.com/api/v2/agents/fetch-output",
-            params={"id": PHANTOM_AGENT_ID},
-            headers={"X-Phantombuster-Key": PHANTOM_API_KEY}
-        )
-        data = r2.json()
-        print(f"[Debug PB] fetch-output keys: {list(data.keys())}")
-
-        # Essayer resultObject d'abord
-        result_obj = data.get("resultObject", "")
-        if result_obj:
-            try:
-                raw_profiles = json.loads(result_obj)
-                print(f"[Debug PB] resultObject parsé : {len(raw_profiles)} profils")
-            except:
-                # Peut-être que c'est du CSV dans resultObject
-                try:
-                    reader = csv.DictReader(io.StringIO(result_obj))
-                    raw_profiles = list(reader)
-                    print(f"[Debug PB] resultObject CSV : {len(raw_profiles)} profils")
-                except Exception as e:
-                    print(f"[Debug PB] Échec parsing resultObject : {e}")
-
-        # Fallback sur output
-        if not raw_profiles:
-            output = data.get("output", "[]")
-            try:
-                raw_profiles = json.loads(output)
-                print(f"[Debug PB] output JSON : {len(raw_profiles)} profils")
-            except:
-                print(f"[Debug PB] output non parsable (longueur: {len(output)})")
+def load_csv():
+    csv_path = "result.csv"
+    if not os.path.exists(csv_path):
+        print(f"[Source A] Fichier {csv_path} introuvable dans le repo.")
+        return []
 
     profiles = []
     skipped = 0
-    for p in raw_profiles:
-        # Gérer les deux formats : JSON (camelCase) et CSV (camelCase aussi)
-        duration_str = p.get("durationInRole", "") or p.get("jobChangeDate", "")
+
+    with open(csv_path, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    print(f"[Source A] CSV lu : {len(rows)} lignes")
+
+    for p in rows:
+        duration_str = p.get("durationInRole", "") or ""
         days_ago, estimated_date = parse_duration_in_role(duration_str)
 
-        # LinkedIn URL : préférer linkedInProfileUrl (standard) sur profileUrl (Sales Nav)
         linkedin_url = (
             p.get("linkedInProfileUrl") or
             p.get("defaultProfileUrl") or
@@ -166,8 +101,8 @@ def fetch_phantombuster():
             profiles.append({
                 "first_name":      p.get("firstName", ""),
                 "last_name":       p.get("lastName", ""),
-                "title":           p.get("title", "") or p.get("jobTitle", ""),
-                "company_name":    p.get("companyName", "") or p.get("company", ""),
+                "title":           p.get("title", ""),
+                "company_name":    p.get("companyName", ""),
                 "linkedin_url":    linkedin_url,
                 "job_change_date": estimated_date,
                 "email":           "",
@@ -179,12 +114,12 @@ def fetch_phantombuster():
         else:
             skipped += 1
 
-    print(f"[Source A] Phantombuster : {len(raw_profiles)} bruts | {len(profiles)} dans la fenêtre {RECENCY_DAYS}j | {skipped} ignorés")
+    print(f"[Source A] {len(profiles)} profils dans la fenêtre {RECENCY_DAYS}j | {skipped} ignorés (trop anciens)")
     return profiles
 
 
 # ============================================================
-# ÉTAPE 2 — Enrichissement Apollo (si données manquantes)
+# ÉTAPE 2 — Enrichissement Apollo
 # ============================================================
 def enrich_profiles(profiles):
     credits = 0
@@ -217,7 +152,7 @@ def enrich_profiles(profiles):
                 p["location"] = (person.get("city") or "") + ", " + (person.get("country") or "")
             credits += 1
         except Exception as e:
-            print(f"Enrichissement échoué pour {p.get('first_name')} {p.get('last_name')} : {e}")
+            print(f"Enrichissement échoué : {p.get('first_name')} {p.get('last_name')} — {e}")
 
     print(f"[Enrichissement] Crédits Apollo utilisés : ~{credits} / 5000 mensuels")
     return profiles
@@ -235,7 +170,7 @@ def score_lead(lead):
     if not any(t in title_lower for t in ICP_TITLES):
         lead["score"] = 0
         lead["priority"] = "Hors cible — mauvaise fonction"
-        lead["score_detail"] = "Fonction non cible, lead écarté"
+        lead["score_detail"] = f"Fonction non cible : {lead.get('title', '')}"
         return lead
 
     score += 3
@@ -267,7 +202,6 @@ def score_lead(lead):
     else:
         reasons.append("Taille inconnue +0")
 
-    # Pas de marketing dédié détecté → +2 par défaut (on n'a pas les titres d'équipe)
     score += 2
     reasons.append("Pas de marketing dédié détecté +2")
 
@@ -358,7 +292,7 @@ def push_to_sheets(qualified):
 if __name__ == "__main__":
     print(f"\n=== ROUTINE BONNES MANIÈRES — {date.today()} ===\n")
 
-    profiles  = fetch_phantombuster()
+    profiles  = load_csv()
     enriched  = enrich_profiles(profiles)
     scored    = [score_lead(l) for l in enriched]
     qualified = [l for l in scored if l.get("score", 0) >= 5]
@@ -373,10 +307,9 @@ if __name__ == "__main__":
         push_to_sheets(qualified)
     else:
         print("ℹ️ Aucun lead qualifié aujourd'hui — fin de routine.")
-        # Afficher les 3 premiers profils scorés pour debug
         if scored:
-            print("\n[Debug] Aperçu des 3 premiers profils scorés :")
-            for l in scored[:3]:
+            print("\n[Debug] Aperçu des 5 premiers profils scorés :")
+            for l in scored[:5]:
                 print(f"  - {l.get('first_name')} {l.get('last_name')} | {l.get('title')} | Score: {l.get('score')} | {l.get('score_detail')}")
 
     print("\n=== FIN DE ROUTINE ===")
